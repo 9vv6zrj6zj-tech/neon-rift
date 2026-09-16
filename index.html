@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NEON RIFT — Arena</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;height:100%;overflow:hidden;background:#050713;color:#fff;font-family:Inter,system-ui,Arial}
+canvas{display:block;width:100vw;height:100vh;background:#050713;cursor:crosshair}
+#ui{position:fixed;inset:0;pointer-events:none}
+.top{display:flex;gap:14px;align-items:center;padding:18px}
+.panel{background:rgba(8,12,30,.78);border:1px solid rgba(120,180,255,.25);backdrop-filter:blur(10px);border-radius:14px;padding:10px 14px;box-shadow:0 8px 30px #0005}
+.bar{width:220px;height:10px;background:#161b34;border-radius:99px;overflow:hidden;margin-top:6px}
+#hp{height:100%;background:linear-gradient(90deg,#ff3b68,#ff8a4c);width:100%}
+#xp{height:100%;background:linear-gradient(90deg,#53d8ff,#9b7bff);width:0}
+#boss{display:none;position:absolute;left:50%;top:18px;transform:translateX(-50%);width:min(560px,70vw);text-align:center}
+#bossbar{height:12px;background:#211328;border-radius:99px;overflow:hidden;border:1px solid #ff4fbb66}
+#bossfill{height:100%;width:100%;background:linear-gradient(90deg,#ff3c8c,#9b5cff)}
+#center{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+.card{pointer-events:auto;text-align:center;max-width:680px;padding:34px;border-radius:24px;background:linear-gradient(145deg,rgba(12,18,45,.96),rgba(7,10,25,.96));border:1px solid #73baff44;box-shadow:0 25px 90px #0009}
+h1{font-size:clamp(42px,8vw,86px);margin:0 0 8px;letter-spacing:.08em;background:linear-gradient(90deg,#5cecff,#a76dff,#ff5ec4);-webkit-background-clip:text;color:transparent}
+h2{margin:0 0 10px}.muted{color:#aab3d3;line-height:1.6}
+button{border:0;border-radius:12px;padding:13px 22px;font-weight:800;font-size:16px;color:#06101c;background:linear-gradient(90deg,#5cecff,#a889ff);cursor:pointer;box-shadow:0 10px 30px #5cecff22}
+button:hover{transform:translateY(-1px);filter:brightness(1.08)}
+#levelup{display:none}.choices{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:20px}.choice{width:190px;text-align:left;background:#101734;border:1px solid #6eaaff33;color:#fff;box-shadow:none}.choice b{display:block;color:#6de9ff;margin-bottom:6px}.choice small{color:#aab3d3}
+#toast{position:absolute;left:50%;bottom:38px;transform:translateX(-50%);font-weight:800;text-shadow:0 2px 12px #000;opacity:0;transition:.2s}
+#mobile{display:none;position:absolute;inset:auto 0 16px;justify-content:space-between;padding:0 18px}
+.stick{width:105px;height:105px;border:1px solid #ffffff25;background:#ffffff0b;border-radius:50%;position:relative}.knob{width:42px;height:42px;border-radius:50%;background:#ffffff18;position:absolute;left:31px;top:31px}
+@media(max-width:700px){.panel{padding:7px 9px;font-size:12px}.bar{width:120px}.top{gap:7px;padding:10px}.card{margin:15px;padding:25px 18px}.choice{width:150px}.choice small{font-size:11px}}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="ui">
+  <div class="top">
+    <div class="panel"><b>NEON RIFT</b><div id="wave">Vague 1</div></div>
+    <div class="panel">❤️ <span id="hpText">100 / 100</span><div class="bar"><div id="hp"></div></div></div>
+    <div class="panel">⚡ LV <span id="lvl">1</span><div class="bar"><div id="xp"></div></div></div>
+    <div class="panel">💠 <span id="score">0</span></div>
+  </div>
+  <div id="boss" class="panel"><b id="bossname">RIFT TITAN</b><div id="bossbar"><div id="bossfill"></div></div></div>
+  <div id="center"><div id="menu" class="card">
+    <h1>NEON RIFT</h1>
+    <h2>Arena Protocol</h2>
+    <p class="muted">Survis aux vagues, améliore ton build et détruis les boss.<br><b>PC :</b> WASD + souris • clic pour tirer • Espace = dash<br><b>Mobile :</b> joystick gauche + vise/tire avec le doigt droit</p>
+    <button id="start">LANCER LA PARTIE</button>
+  </div></div>
+  <div id="toast"></div>
+  <div id="mobile"><div class="stick" id="moveStick"><div class="knob"></div></div><div class="stick" id="aimStick"><div class="knob"></div></div></div>
+</div>
+<script>
+const c=document.getElementById('game'),x=c.getContext('2d');
+let W,H,DPR; function resize(){DPR=devicePixelRatio||1;W=innerWidth;H=innerHeight;c.width=W*DPR;c.height=H*DPR;x.setTransform(DPR,0,0,DPR,0,0)} addEventListener('resize',resize);resize();
+
+const keys={}, mouse={x:W/2,y:H/2,down:false}; addEventListener('keydown',e=>{keys[e.key.toLowerCase()]=true;if(e.code==='Space')dash()});addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+addEventListener('mousemove',e=>{mouse.x=e.clientX;mouse.y=e.clientY});addEventListener('mousedown',()=>mouse.down=true);addEventListener('mouseup',()=>mouse.down=false);
+
+let game=false, paused=false, last=0, spawnT=0, wave=1, waveKills=0, score=0;
+let p,enemies=[],bullets=[],parts=[],orbs=[],level=1,xp=0,xpNeed=70,fireCd=0,dashCd=0;
+let stats={maxHp:100,hp:100,speed:260,damage:24,rate:6,crit:.08,magnet:90};
+const upgrades=[
+ ['OVERCHARGE','Dégâts +25%',()=>stats.damage*=1.25],
+ ['QUICKFIRE','Cadence +18%',()=>stats.rate*=1.18],
+ ['CORE','PV max +25 et soin',()=>{stats.maxHp*=1.25;stats.hp=stats.maxHp}],
+ ['THRUST','Vitesse +15%',()=>stats.speed*=1.15],
+ ['MAGNET','Aimant à XP +60%',()=>stats.magnet*=1.6],
+ ['PRECISION','Critique +8%',()=>stats.crit+=.08]
+];
+
+function reset(){game=true;paused=false;wave=1;waveKills=0;score=0;level=1;xp=0;xpNeed=70;enemies=[];bullets=[];parts=[];orbs=[];stats={maxHp:100,hp:100,speed:260,damage:24,rate:6,crit:.08,magnet:90};p={x:W/2,y:H/2,r:16,ang:0};spawnT=0;document.getElementById('center').style.display='none';document.getElementById('boss').style.display='none';updateUI()}
+function toast(t){let e=document.getElementById('toast');e.textContent=t;e.style.opacity=1;clearTimeout(toast.t);toast.t=setTimeout(()=>e.style.opacity=0,1200)}
+function spawn(){let a=Math.random()*Math.PI*2,d=Math.max(W,H)*.65+80;let type=Math.random()<.12+wave*.006?'elite':'normal';enemies.push({x:p.x+Math.cos(a)*d,y:p.y+Math.sin(a)*d,r:type==='elite'?24:14,hp:type==='elite'?90+wave*15:35+wave*5,max:type==='elite'?90+wave*15:35+wave*5,s:type==='elite'?70+wave*2:95+wave*3,type})}
+function shoot(){if(fireCd>0)return;fireCd=1/stats.rate;let a=Math.atan2(mouse.y-p.y,mouse.x-p.x),crit=Math.random()<stats.crit;bullets.push({x:p.x+Math.cos(a)*18,y:p.y+Math.sin(a)*18,vx:Math.cos(a)*720,vy:Math.sin(a)*720,r:4,damage:stats.damage*(crit?2:1),crit})}
+function dash(){if(!game||dashCd>0)return;let dx=(keys.d?1:0)-(keys.a?1:0),dy=(keys.s?1:0)-(keys.w?1:0);if(!dx&&!dy){dx=Math.cos(p.ang);dy=Math.sin(p.ang)}let l=Math.hypot(dx,dy)||1;p.x+=dx/l*150;p.y+=dy/l*150;dashCd=1.1;for(let i=0;i<18;i++)parts.push({x:p.x,y:p.y,vx:(Math.random()-.5)*180,vy:(Math.random()-.5)*180,life:.5})}
+function addXP(v){xp+=v;if(xp>=xpNeed){xp-=xpNeed;level++;xpNeed=Math.floor(xpNeed*1.28);showLevelUp()}}
+function showLevelUp(){paused=true;let ch=[...upgrades].sort(()=>Math.random()-.5).slice(0,3), html='<div class="card"><h2>NIVEAU '+level+'</h2><p class="muted">Choisis une amélioration.</p><div class="choices">'+ch.map((u,i)=>`<button class="choice" onclick="pick(${upgrades.indexOf(u)})"><b>${u[0]}</b><small>${u[1]}</small></button>`).join('')+'</div></div>';document.getElementById('center').innerHTML=html;document.getElementById('center').style.display='flex'}
+window.pick=i=>{upgrades[i][2]();paused=false;document.getElementById('center').style.display='none';toast(upgrades[i][0])}
+
+function hitEnemy(e,b){return Math.hypot(e.x-b.x,e.y-b.y)<e.r+b.r}
+function update(dt){
+ if(!game||paused)return;
+ fireCd-=dt;dashCd-=dt; spawnT-=dt;
+ p.ang=Math.atan2(mouse.y-p.y,mouse.x-p.x);
+ let dx=(keys.d?1:0)-(keys.a?1:0),dy=(keys.s?1:0)-(keys.w?1:0),l=Math.hypot(dx,dy)||1;
+ p.x=Math.max(20,Math.min(W-20,p.x+dx/l*stats.speed*dt));p.y=Math.max(70,Math.min(H-20,p.y+dy/l*stats.speed*dt));
+ if(mouse.down)shoot();
+ if(spawnT<=0){let count=1+Math.floor(wave/3);for(let i=0;i<count;i++)spawn();spawnT=Math.max(.28,1.0-wave*.025)}
+ bullets.forEach(b=>{b.x+=b.vx*dt;b.y+=b.vy*dt});
+ for(let i=bullets.length-1;i>=0;i--){let b=bullets[i],gone=b.x<-50||b.x>W+50||b.y<-50||b.y>H+50;
+  if(gone){bullets.splice(i,1);continue}
+  for(let j=enemies.length-1;j>=0;j--)if(hitEnemy(enemies[j],b)){let e=enemies[j];e.hp-=b.damage;bullets.splice(i,1);parts.push({x:b.x,y:b.y,vx:(Math.random()-.5)*120,vy:(Math.random()-.5)*120,life:.3});if(e.hp<=0){score+=e.type==='elite'?120:25;waveKills++;orbs.push({x:e.x,y:e.y,v: e.type==='elite'?35:12});for(let q=0;q<7;q++)parts.push({x:e.x,y:e.y,vx:(Math.random()-.5)*220,vy:(Math.random()-.5)*220,life:.7});enemies.splice(j,1);if(waveKills>=18+wave*4){wave++;waveKills=0;toast('VAGUE '+wave+' !');if(wave%5===0)spawnBoss()}}break}
+ }
+ enemies.forEach(e=>{let a=Math.atan2(p.y-e.y,p.x-e.x);e.x+=Math.cos(a)*e.s*dt;e.y+=Math.sin(a)*e.s*dt;if(Math.hypot(e.x-p.x,e.y-p.y)<e.r+p.r){stats.hp-=22*dt;if(stats.hp<=0)die()}});
+ for(let i=orbs.length-1;i>=0;i--){let o=orbs[i],d=Math.hypot(o.x-p.x,o.y-p.y);if(d<stats.magnet){let a=Math.atan2(p.y-o.y,p.x-o.x);o.x+=Math.cos(a)*(260+stats.magnet)*dt;o.y+=Math.sin(a)*(260+stats.magnet)*dt}if(d<22){addXP(o.v);orbs.splice(i,1)}}
+ parts.forEach(q=>{q.x+=q.vx*dt;q.y+=q.vy*dt;q.vx*=.96;q.vy*=.96;q.life-=dt});parts=parts.filter(q=>q.life>0);
+ updateUI()
+}
+function spawnBoss(){let a=Math.random()*6.28;let e={x:p.x+Math.cos(a)*700,y:p.y+Math.sin(a)*700,r:52,hp:1500+wave*300,max:1500+wave*300,s:45+wave,type:'boss',name:'RIFT TITAN'};enemies.push(e);document.getElementById('boss').style.display='block';toast('⚠ BOSS INCOMING')}
+function die(){game=false;document.getElementById('center').innerHTML=`<div class="card"><h1 style="font-size:54px">SYSTEM DOWN</h1><h2>Score : ${score}</h2><p class="muted">Tu as atteint la vague ${wave} — niveau ${level}.</p><button onclick="reset()">REJOUER</button></div>`;document.getElementById('center').style.display='flex';document.getElementById('boss').style.display='none'}
+function updateUI(){document.getElementById('wave').textContent='Vague '+wave;document.getElementById('hpText').textContent=Math.max(0,Math.ceil(stats.hp))+' / '+Math.ceil(stats.maxHp);document.getElementById('hp').style.width=Math.max(0,stats.hp/stats.maxHp*100)+'%';document.getElementById('lvl').textContent=level;document.getElementById('xp').style.width=xp/xpNeed*100+'%';document.getElementById('score').textContent=score;let b=enemies.find(e=>e.type==='boss');if(b)document.getElementById('bossfill').style.width=Math.max(0,b.hp/b.max*100)+'%';else document.getElementById('boss').style.display='none'}
+
+function draw(){
+ x.clearRect(0,0,W,H);
+ let grd=x.createRadialGradient(W/2,H/2,30,W/2,H/2,Math.max(W,H));grd.addColorStop(0,'#10183b');grd.addColorStop(1,'#03040c');x.fillStyle=grd;x.fillRect(0,0,W,H);
+ x.strokeStyle='#ffffff08';x.lineWidth=1;let s=50,ox=(-p.x%s),oy=(-p.y%s);for(let X=ox;X<W;X+=s){x.beginPath();x.moveTo(X,0);x.lineTo(X,H);x.stroke()}for(let Y=oy;Y<H;Y+=s){x.beginPath();x.moveTo(0,Y);x.lineTo(W,Y);x.stroke()}
+ parts.forEach(q=>{x.globalAlpha=Math.max(0,q.life/.7);x.fillStyle='#68e8ff';x.beginPath();x.arc(q.x,q.y,3,0,7);x.fill()});x.globalAlpha=1;
+ orbs.forEach(o=>{x.shadowBlur=15;x.shadowColor='#5cecff';x.fillStyle='#5cecff';x.beginPath();x.arc(o.x,o.y,5,0,7);x.fill();x.shadowBlur=0});
+ bullets.forEach(b=>{x.shadowBlur=12;x.shadowColor=b.crit?'#ff6bcf':'#67eaff';x.fillStyle=b.crit?'#ff6bcf':'#67eaff';x.beginPath();x.arc(b.x,b.y,b.r,0,7);x.fill();x.shadowBlur=0});
+ enemies.forEach(e=>{x.save();x.translate(e.x,e.y);let col=e.type==='boss'?'#ff4fae':e.type==='elite'?'#a76dff':'#ff5d78';x.shadowBlur=e.type==='boss'?30:15;x.shadowColor=col;x.fillStyle=col;x.beginPath();x.arc(0,0,e.r,0,7);x.fill();x.shadowBlur=0;x.fillStyle='#080a18';x.beginPath();x.arc(-e.r*.25,-e.r*.15,e.r*.28,0,7);x.arc(e.r*.25,-e.r*.15,e.r*.28,0,7);x.fill();x.restore()});
+ if(game){x.save();x.translate(p.x,p.y);x.rotate(p.ang);x.shadowBlur=25;x.shadowColor='#5cecff';x.fillStyle='#5cecff';x.beginPath();x.arc(0,0,p.r,0,7);x.fill();x.fillStyle='#d9fbff';x.fillRect(7,-4,22,8);x.shadowBlur=0;x.restore()}
+}
+function loop(t){let dt=Math.min(.033,(t-last)/1000||0);last=t;update(dt);draw();requestAnimationFrame(loop)}requestAnimationFrame(loop);
+document.getElementById('start').onclick=reset;
+
+// Mobile touch controls
+function stick(el,mode){let k=el.querySelector('.knob'),id=null,cx=0,cy=0;el.addEventListener('touchstart',e=>{e.preventDefault();let t=e.changedTouches[0];id=t.identifier;cx=t.clientX;cy=t.clientY},{passive:false});el.addEventListener('touchmove',e=>{e.preventDefault();let t=[...e.touches].find(z=>z.identifier===id);if(!t)return;let dx=t.clientX-cx,dy=t.clientY-cy,l=Math.min(38,Math.hypot(dx,dy)),a=Math.atan2(dy,dx);k.style.transform=`translate(${Math.cos(a)*l}px,${Math.sin(a)*l}px)`;if(mode==='move'){keys.w=dy<-10;keys.s=dy>10;keys.a=dx<-10;keys.d=dx>10}else{mouse.x=p.x+dx*10;mouse.y=p.y+dy*10;mouse.down=true}},{passive:false});let end=()=>{id=null;k.style.transform='';if(mode==='move')['w','a','s','d'].forEach(z=>keys[z]=false);else mouse.down=false};el.addEventListener('touchend',end);el.addEventListener('touchcancel',end)}
+if('ontouchstart'in window){document.getElementById('mobile').style.display='flex';stick(document.getElementById('moveStick'),'move');stick(document.getElementById('aimStick'),'aim')}
+</script>
+</body></html>
